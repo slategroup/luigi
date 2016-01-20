@@ -102,6 +102,45 @@ class S3CopyToTable(rdbms.CopyToTable):
         """
         return ''
 
+    @property
+    def staging_table(self):
+        return self.staging_table_name
+
+    @property
+    def join_on(self):
+        return self.join_on_column
+
+    def do_merge_table(self):
+        """
+        Return True if table should be merged with a staging table
+        """
+        return False
+
+    def create_staging_table(self, cursor):
+        query = "create temp table {staging_table_name} (like {table_name})".format(
+            staging_table_name=self.staging_table,
+            table_name=self.table
+        )
+        cursor.execute(query)
+
+    def merge_tables(self, cursor):
+        query = """begin transaction;
+                   delete from {table_name}
+                   using {staging_table_name}
+                   where {table_name}.{join_on} = {staging_table_name}.{join_on};
+
+                   insert into {table_name}
+                   select * from {staging_table_name};
+                   end transaction;""".format(
+            table_name=self.table,
+            staging_table_name=self.staging_table,
+            join_on=self.join_on
+        )
+        cursor.execute(query)
+        cursor.execute('drop table {staging_table_name}'.format(
+            staging_table_name=self.staging_table))
+
+
     def table_attributes(self):
         '''Add extra table attributes, for example:
         DISTSTYLE KEY
@@ -188,15 +227,20 @@ class S3CopyToTable(rdbms.CopyToTable):
         """
         Defines copying from s3 into redshift.
         """
-
+        table = self.table
+        if self.do_merge_table():
+            self.create_staging_table(cursor)
+            table = self.staging_table
         cursor.execute("""
          COPY %s from '%s'
          CREDENTIALS 'aws_access_key_id=%s;aws_secret_access_key=%s'
          delimiter '%s'
          %s
-         ;""" % (self.table, f, self.aws_access_key_id,
+         ;""" % (table, f, self.aws_access_key_id,
                  self.aws_secret_access_key, self.column_separator,
                  self.copy_options))
+        if self.do_merge_table():
+            self.merge_tables(cursor)
 
     def output(self):
         """
