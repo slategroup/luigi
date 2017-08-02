@@ -16,7 +16,7 @@
 #
 
 """
-These are the unit tests for the BigQuery-luigi binding.
+These are the unit tests for the Bigquery-luigi binding.
 """
 
 
@@ -30,13 +30,13 @@ PROJECT_ID = 'projectid'
 DATASET_ID = 'dataset'
 
 
-class TestRunQueryTask(bigquery.BigQueryRunQueryTask):
+class TestRunQueryTask(bigquery.BigqueryRunQueryTask):
     client = MagicMock()
     query = ''' SELECT 'hello' as field1, 2 as field2 '''
     table = luigi.Parameter()
 
     def output(self):
-        return bigquery.BigQueryTarget(PROJECT_ID, DATASET_ID, self.table, client=self.client)
+        return bigquery.BigqueryTarget(PROJECT_ID, DATASET_ID, self.table, client=self.client)
 
 
 class TestRunQueryTaskDontFlattenResults(TestRunQueryTask):
@@ -46,7 +46,7 @@ class TestRunQueryTaskDontFlattenResults(TestRunQueryTask):
         return False
 
 
-class TestRunQueryTaskWithRequires(bigquery.BigQueryRunQueryTask):
+class TestRunQueryTaskWithRequires(bigquery.BigqueryRunQueryTask):
     client = MagicMock()
     table = luigi.Parameter()
 
@@ -61,57 +61,25 @@ class TestRunQueryTaskWithRequires(bigquery.BigQueryRunQueryTask):
         return 'SELECT * FROM [{dataset}.{table}]'.format(dataset=dataset, table=table)
 
     def output(self):
-        return bigquery.BigQueryTarget(PROJECT_ID, DATASET_ID, self.table, client=self.client)
-
-
-class TestRunQueryTaskWithUdf(bigquery.BigqueryRunQueryTask):
-    client = MagicMock()
-    table = luigi.Parameter()
-
-    @property
-    def udf_resource_uris(self):
-        return ["gs://test/file1.js", "gs://test/file2.js"]
-
-    @property
-    def query(self):
-        return 'SELECT 1'
-
-    def output(self):
         return bigquery.BigqueryTarget(PROJECT_ID, DATASET_ID, self.table, client=self.client)
 
 
-class TestRunQueryTaskWithoutLegacySql(bigquery.BigqueryRunQueryTask):
-    client = MagicMock()
-    table = luigi.Parameter()
-
-    @property
-    def use_legacy_sql(self):
-        return False
-
-    @property
-    def query(self):
-        return 'SELECT 1'
-
-    def output(self):
-        return bigquery.BigqueryTarget(PROJECT_ID, DATASET_ID, self.table, client=self.client)
-
-
-class TestExternalBigQueryTask(bigquery.ExternalBigQueryTask):
+class TestExternalBigqueryTask(bigquery.ExternalBigqueryTask):
     client = MagicMock()
 
     def output(self):
-        return bigquery.BigQueryTarget(PROJECT_ID, DATASET_ID, 'table1', client=self.client)
+        return bigquery.BigqueryTarget(PROJECT_ID, DATASET_ID, 'table1', client=self.client)
 
 
-class TestCreateViewTask(bigquery.BigQueryCreateViewTask):
+class TestCreateViewTask(bigquery.BigqueryCreateViewTask):
     client = MagicMock()
     view = '''SELECT * FROM table LIMIT 10'''
 
     def output(self):
-        return bigquery.BigQueryTarget(PROJECT_ID, DATASET_ID, 'view1', client=self.client)
+        return bigquery.BigqueryTarget(PROJECT_ID, DATASET_ID, 'view1', client=self.client)
 
 
-class BigQueryTest(unittest.TestCase):
+class BigqueryTest(unittest.TestCase):
 
     def test_bulk_complete(self):
         parameters = ['table1', 'table2']
@@ -122,7 +90,7 @@ class BigQueryTest(unittest.TestCase):
         TestRunQueryTask.client = client
 
         complete = list(TestRunQueryTask.bulk_complete(parameters))
-        self.assertEqual(complete, ['table2'])
+        self.assertEquals(complete, ['table2'])
 
     def test_dataset_doesnt_exist(self):
         client = MagicMock()
@@ -130,7 +98,7 @@ class BigQueryTest(unittest.TestCase):
         TestRunQueryTask.client = client
 
         complete = list(TestRunQueryTask.bulk_complete(['table1']))
-        self.assertEqual(complete, [])
+        self.assertEquals(complete, [])
 
     def test_query_property(self):
         task = TestRunQueryTask(table='table2')
@@ -153,42 +121,10 @@ class BigQueryTest(unittest.TestCase):
         self.assertIn(expected_table, query)
         self.assertEqual(query, task.query)
 
-    def test_query_udf(self):
-        task = TestRunQueryTaskWithUdf(table='table2')
-        task.client = MagicMock()
-        task.run()
-
-        (_, job), _ = task.client.run_job.call_args
-
-        udfs = [
-            {'resourceUri': 'gs://test/file1.js'},
-            {'resourceUri': 'gs://test/file2.js'},
-        ]
-
-        self.assertEqual(job['configuration']['query']['userDefinedFunctionResources'], udfs)
-
-    def test_query_with_legacy_sql(self):
-        task = TestRunQueryTask(table='table2')
-        task.client = MagicMock()
-        task.run()
-
-        (_, job), _ = task.client.run_job.call_args
-
-        self.assertEqual(job['configuration']['query']['useLegacySql'], True)
-
-    def test_query_without_legacy_sql(self):
-        task = TestRunQueryTaskWithoutLegacySql(table='table2')
-        task.client = MagicMock()
-        task.run()
-
-        (_, job), _ = task.client.run_job.call_args
-
-        self.assertEqual(job['configuration']['query']['useLegacySql'], False)
-
     def test_external_task(self):
-        task = TestExternalBigQueryTask()
+        task = TestExternalBigqueryTask()
         self.assertIsInstance(task, luigi.ExternalTask)
-        self.assertIsInstance(task, bigquery.MixinBigQueryBulkComplete)
+        self.assertIsInstance(task, bigquery.MixinBigqueryBulkComplete)
 
     def test_create_view(self):
         task = TestCreateViewTask()

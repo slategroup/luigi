@@ -23,7 +23,7 @@ from luigi import six
 
 import luigi
 from luigi.contrib.ssh import RemoteContext, RemoteTarget
-from luigi.mock import MockTarget
+from luigi.mock import MockFile
 
 SSH_HOST = "some.accessible.host"
 
@@ -58,7 +58,7 @@ class ProcessRemoteData(luigi.Task):
     """
     Create a toplist of users based on how many running processes they have on a remote machine.
 
-    In this example the processed data is stored in a MockTarget.
+    In this example the processed data is stored in a MockFile.
     """
 
     def requires(self):
@@ -96,4 +96,8 @@ class ProcessRemoteData(luigi.Task):
         :return: the target output for this task.
         :rtype: object (:py:class:`~luigi.target.Target`)
         """
-        return MockTarget("output", mirror_on_stderr=True)
+        return MockFile("output", mirror_on_stderr=True)
+
+
+if __name__ == "__main__":
+    luigi.run()

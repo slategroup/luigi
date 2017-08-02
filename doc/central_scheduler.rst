@@ -18,16 +18,16 @@ This model may seem limited, but
 we believe that it makes things far more intuitive and easy to understand.
 
 .. figure:: dependency_graph.png
-   :alt: Dependency graph in the visualiser
+   :alt: Dependency graph in the visualizer
 
 The luigid server
 ~~~~~~~~~~~~~~~~~
 
 To run the server as a daemon run:
 
-.. code-block:: console
+::
 
-    $ luigid --background --pidfile <PATH_TO_PIDFILE> --logdir <PATH_TO_LOGDIR> --state-path <PATH_TO_STATEFILE>
+    luigid --background --pidfile <PATH_TO_PIDFILE> --logdir <PATH_TO_LOGDIR> --state-path <PATH_TO_STATEFILE>
 
 Note that this requires ``python-daemon``.
 By default, the server starts on AF_INET and AF_INET6 port ``8082``
@@ -36,7 +36,7 @@ By default, the server starts on AF_INET and AF_INET6 port ``8082``
 
 For a full list of configuration options and defaults,
 see the :ref:`scheduler configuration section <scheduler-config>`.
-Note that ``luigid`` uses the same configuration files as the Luigi client
+Note that ``luigid`` uses the same configuration files as the luigi client
 (i.e. ``luigi.cfg`` or ``/etc/luigi/client.cfg`` by default).
 
 .. _TaskHistory:
@@ -59,9 +59,7 @@ When starting up,
 ``luigid`` will create all the necessary tables using `create_all
 <http://docs.sqlalchemy.org/en/rel_0_9/core/metadata.html#sqlalchemy.schema.MetaData.create_all>`_.
 
-Example configuration
-
-.. code:: ini
+Example configuration::
 
     [scheduler]
     record_task_history = True

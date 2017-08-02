@@ -31,7 +31,6 @@ API Reference
    luigi
    luigi.contrib
    luigi.tools
-   luigi.local_target
 
 
 Indices and tables

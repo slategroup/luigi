@@ -101,3 +101,7 @@ class WrapperTest(unittest.TestCase):
 
 class WrapperWithMultipleWorkersTest(WrapperTest):
     workers = 7
+
+
+if __name__ == '__main__':
+    luigi.run()

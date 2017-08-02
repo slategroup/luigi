@@ -72,16 +72,10 @@ Running this Locally
 
 Try running this using eg.
 
-.. code-block:: console
+::
 
     $ cd examples
     $ luigi --module top_artists AggregateArtists --local-scheduler --date-interval 2012-06
-
-Note that  *top_artists* needs to be in your PYTHONPATH, or else this can produce an error (*ImportError: No module named top_artists*). Add the current working directory to the command PYTHONPATH with:
-
-.. code-block:: console
-
-    $ PYTHONPATH='.' luigi --module top_artists AggregateArtists --local-scheduler --date-interval 2012-06
 
 You can also try to view the manual using `--help` which will give you an
 overview of the options.
@@ -172,7 +166,7 @@ defines a dependency on the previous task (*AggregateArtists*).
 This means that if the output of *AggregateArtists* does not exist,
 the task will run before *Top10Artists*.
 
-.. code-block:: console
+::
 
     $ luigi --module examples.top_artists Top10Artists --local-scheduler --date-interval 2012-07
 
@@ -188,7 +182,7 @@ you can reuse for a lot of different tasks.
 
 .. code:: python
 
-    class ArtistToplistToDatabase(luigi.contrib.postgres.CopyToTable):
+    class ArtistToplistToDatabase(luigi.postgres.CopyToTable):
         date_interval = luigi.DateIntervalParameter()
         use_hadoop = luigi.BoolParameter()
 
@@ -226,9 +220,9 @@ your script will try to connect to the central planner,
 by default at localhost port 8082.
 If you run
 
-.. code-block:: console
+::
 
-    $ luigid
+    luigid
 
 in the background and then run your task without the ``--local-scheduler`` flag,
 then your script will now schedule through a centralized server.

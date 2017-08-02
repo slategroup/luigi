@@ -22,8 +22,8 @@ except ImportError:
     import mock
 
 import luigi.rpc
-from luigi.scheduler import Scheduler
-import scheduler_api_test
+from luigi.scheduler import CentralPlannerScheduler
+import central_planner_test
 import luigi.server
 from server_test import ServerTestBase
 import time
@@ -88,11 +88,11 @@ class RemoteSchedulerTest(unittest.TestCase):
         self.assertRaises(luigi.rpc.RPCError, self.get_work, fetch_results)
 
 
-class RPCTest(scheduler_api_test.SchedulerApiTest, ServerTestBase):
+class RPCTest(central_planner_test.CentralPlannerTest, ServerTestBase):
 
     def get_app(self):
         conf = self.get_scheduler_config()
-        sch = Scheduler(**conf)
+        sch = CentralPlannerScheduler(**conf)
         return luigi.server.app(sch)
 
     def setUp(self):

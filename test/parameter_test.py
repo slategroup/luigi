@@ -26,7 +26,6 @@ import luigi.interface
 import luigi.notifications
 from luigi.mock import MockTarget
 from luigi.parameter import ParameterException
-from luigi import six
 from worker_test import email_patch
 
 luigi.notifications.DEBUG = True
@@ -55,20 +54,6 @@ class Baz(luigi.Task):
 
     def run(self):
         Baz._val = self.bool
-
-
-class ListFoo(luigi.Task):
-    my_list = luigi.ListParameter()
-
-    def run(self):
-        ListFoo._val = self.my_list
-
-
-class TupleFoo(luigi.Task):
-    my_tuple = luigi.TupleParameter()
-
-    def run(self):
-        TupleFoo._val = self.my_tuple
 
 
 class ForgotParam(luigi.Task):
@@ -201,7 +186,7 @@ class ParameterTest(LuigiTestCase):
         self.assertTrue(WithDefaultTrue().x)
 
     def test_bool_coerce(self):
-        self.assertEqual(True, WithDefaultTrue(x='yes').x)
+        self.assertEquals(True, WithDefaultTrue(x='yes').x)
 
     def test_bool_no_coerce_none(self):
         self.assertIsNone(WithDefaultTrue(x=None).x)
@@ -275,124 +260,6 @@ class ParameterTest(LuigiTestCase):
 
     def test_enum_param_missing(self):
         self.assertRaises(ParameterException, lambda: luigi.parameter.EnumParameter())
-
-    def test_list_serialize_parse(self):
-        a = luigi.ListParameter()
-        b_list = [1, 2, 3]
-        self.assertEqual(b_list, a.parse(a.serialize(b_list)))
-
-    def test_tuple_serialize_parse(self):
-        a = luigi.TupleParameter()
-        b_tuple = ((1, 2), (3, 4))
-        self.assertEqual(b_tuple, a.parse(a.serialize(b_tuple)))
-
-    def test_parse_list_without_batch_method(self):
-        param = luigi.Parameter()
-        for xs in [], ['x'], ['x', 'y']:
-            self.assertRaises(NotImplementedError, param._parse_list, xs)
-
-    def test_parse_empty_list_raises_value_error(self):
-        for batch_method in (max, min, tuple, ','.join):
-            param = luigi.Parameter(batch_method=batch_method)
-            self.assertRaises(ValueError, param._parse_list, [])
-
-    def test_parse_int_list_max(self):
-        param = luigi.IntParameter(batch_method=max)
-        self.assertEqual(17, param._parse_list(['7', '17', '5']))
-
-    def test_parse_string_list_max(self):
-        param = luigi.Parameter(batch_method=max)
-        self.assertEqual('7', param._parse_list(['7', '17', '5']))
-
-    def test_parse_list_as_tuple(self):
-        param = luigi.IntParameter(batch_method=tuple)
-        self.assertEqual((7, 17, 5), param._parse_list(['7', '17', '5']))
-
-
-class TestParametersHashability(LuigiTestCase):
-    def test_date(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.DateParameter()
-        p = luigi.parameter.DateParameter()
-        self.assertEqual(hash(Foo(args=datetime.date(2000, 1, 1)).args), hash(p.parse('2000-1-1')))
-
-    def test_dateminute(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.DateMinuteParameter()
-        p = luigi.parameter.DateMinuteParameter()
-        self.assertEqual(hash(Foo(args=datetime.datetime(2000, 1, 1, 12, 0)).args), hash(p.parse('2000-1-1T1200')))
-
-    def test_dateinterval(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.DateIntervalParameter()
-        p = luigi.parameter.DateIntervalParameter()
-        di = luigi.date_interval.Custom(datetime.date(2000, 1, 1), datetime.date(2000, 2, 12))
-        self.assertEqual(hash(Foo(args=di).args), hash(p.parse('2000-01-01-2000-02-12')))
-
-    def test_timedelta(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.TimeDeltaParameter()
-        p = luigi.parameter.TimeDeltaParameter()
-        self.assertEqual(hash(Foo(args=datetime.timedelta(days=2, hours=3, minutes=2)).args), hash(p.parse('P2DT3H2M')))
-
-    def test_boolean(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.BoolParameter()
-
-        p = luigi.parameter.BoolParameter()
-        self.assertEqual(hash(Foo(args=True).args), hash(p.parse('true')))
-
-    def test_int(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.IntParameter()
-
-        p = luigi.parameter.IntParameter()
-        self.assertEqual(hash(Foo(args=1).args), hash(p.parse('1')))
-
-    def test_float(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.FloatParameter()
-
-        p = luigi.parameter.FloatParameter()
-        self.assertEqual(hash(Foo(args=1.0).args), hash(p.parse('1')))
-
-    def test_enum(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.EnumParameter(enum=MyEnum)
-
-        p = luigi.parameter.EnumParameter(enum=MyEnum)
-        self.assertEqual(hash(Foo(args=MyEnum.A).args), hash(p.parse('A')))
-
-    def test_dict(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.DictParameter()
-
-        p = luigi.parameter.DictParameter()
-        self.assertEqual(hash(Foo(args=dict(foo=1, bar="hello")).args), hash(p.parse('{"foo":1,"bar":"hello"}')))
-
-    def test_list(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.ListParameter()
-
-        p = luigi.parameter.ListParameter()
-        self.assertEqual(hash(Foo(args=[1, "hello"]).args), hash(p.normalize(p.parse('[1,"hello"]'))))
-
-    def test_tuple(self):
-        class Foo(luigi.Task):
-            args = luigi.parameter.TupleParameter()
-
-        p = luigi.parameter.TupleParameter()
-        self.assertEqual(hash(Foo(args=(1, "hello")).args), hash(p.parse('(1,"hello")')))
-
-    def test_task(self):
-        class Bar(luigi.Task):
-            pass
-
-        class Foo(luigi.Task):
-            args = luigi.parameter.TaskParameter()
-
-        p = luigi.parameter.TaskParameter()
-        self.assertEqual(hash(Foo(args=Bar).args), hash(p.parse('Bar')))
 
 
 class TestNewStyleGlobalParameters(LuigiTestCase):
@@ -505,26 +372,23 @@ class TestRemoveGlobalParameters(LuigiTestCase):
             self.assertEqual(Dogs().n_dogs, 654)
             self.assertEqual(CatsWithoutSection().n_cats, 321)
 
-    if six.PY3:
-        def test_global_significant_param_warning(self):
-            """ We don't want any kind of global param to be positional """
-            with self.assertWarnsRegex(DeprecationWarning, 'is_global support is removed. Assuming positional=False'):
-                class MyTask(luigi.Task):
-                    # This could typically be called "--test-dry-run"
-                    x_g1 = luigi.Parameter(default='y', is_global=True, significant=True)
+    def test_global_significant_param(self):
+        """ We don't want any kind of global param to be positional """
+        class MyTask(luigi.Task):
+            # This could typically be called "--test-dry-run"
+            x_g1 = luigi.Parameter(default='y', is_global=True, significant=True)
 
-            self.assertRaises(luigi.parameter.UnknownParameterException,
-                              lambda: MyTask('arg'))
+        self.assertRaises(luigi.parameter.UnknownParameterException,
+                          lambda: MyTask('arg'))
 
-        def test_global_insignificant_param_warning(self):
-            """ We don't want any kind of global param to be positional """
-            with self.assertWarnsRegex(DeprecationWarning, 'is_global support is removed. Assuming positional=False'):
-                class MyTask(luigi.Task):
-                    # This could typically be "--yarn-pool=development"
-                    x_g2 = luigi.Parameter(default='y', is_global=True, significant=False)
+    def test_global_insignificant_param(self):
+        """ We don't want any kind of global param to be positional """
+        class MyTask(luigi.Task):
+            # This could typically be "--yarn-pool=development"
+            x_g2 = luigi.Parameter(default='y', is_global=True, significant=False)
 
-            self.assertRaises(luigi.parameter.UnknownParameterException,
-                              lambda: MyTask('arg'))
+        self.assertRaises(luigi.parameter.UnknownParameterException,
+                          lambda: MyTask('arg'))
 
 
 class TestParamWithDefaultFromConfig(LuigiTestCase):
@@ -567,21 +431,7 @@ class TestParamWithDefaultFromConfig(LuigiTestCase):
     @with_config({"foo": {"bar": "2001-02-03T04H30"}})
     def testDateMinuteDeprecated(self):
         p = luigi.DateMinuteParameter(config_path=dict(section="foo", name="bar"))
-        if six.PY3:
-            with self.assertWarnsRegex(DeprecationWarning, 'Using "H" between hours and minutes is deprecated, omit it instead.'):
-                self.assertEqual(datetime.datetime(2001, 2, 3, 4, 30, 0), _value(p))
-        else:
-            self.assertEqual(datetime.datetime(2001, 2, 3, 4, 30, 0), _value(p))
-
-    @with_config({"foo": {"bar": "2001-02-03T040506"}})
-    def testDateSecond(self):
-        p = luigi.DateSecondParameter(config_path=dict(section="foo", name="bar"))
-        self.assertEqual(datetime.datetime(2001, 2, 3, 4, 5, 6), _value(p))
-
-    @with_config({"foo": {"bar": "2001-02-03T040507"}})
-    def testDateSecondWithInterval(self):
-        p = luigi.DateSecondParameter(config_path=dict(section="foo", name="bar"), interval=2)
-        self.assertEqual(datetime.datetime(2001, 2, 3, 4, 5, 6), _value(p))
+        self.assertEqual(datetime.datetime(2001, 2, 3, 4, 30, 0), _value(p))
 
     @with_config({"foo": {"bar": "2001-02-03"}})
     def testDate(self):
@@ -636,16 +486,6 @@ class TestParamWithDefaultFromConfig(LuigiTestCase):
         p = luigi.DateIntervalParameter(config_path=dict(section="foo", name="bar"))
         expected = luigi.date_interval.Custom.parse("2001-02-03-2001-02-28")
         self.assertEqual(expected, _value(p))
-
-    @with_config({"foo": {"bar": "0 seconds"}})
-    def testTimeDeltaNoSeconds(self):
-        p = luigi.TimeDeltaParameter(config_path=dict(section="foo", name="bar"))
-        self.assertEqual(timedelta(seconds=0), _value(p))
-
-    @with_config({"foo": {"bar": "0 d"}})
-    def testTimeDeltaNoDays(self):
-        p = luigi.TimeDeltaParameter(config_path=dict(section="foo", name="bar"))
-        self.assertEqual(timedelta(days=0), _value(p))
 
     @with_config({"foo": {"bar": "1 day"}})
     def testTimeDelta(self):
@@ -838,71 +678,17 @@ class TestParamWithDefaultFromConfig(LuigiTestCase):
         self.assertTrue(self.run_locally_split('mynamespace.A --mynamespace.A-p 200 --expected 200'))
         self.assertFalse(self.run_locally_split('mynamespace.A --A-p 200 --expected 200'))
 
-    def testListWithNamespaceCli(self):
-        class A(luigi.Task):
-            task_namespace = 'mynamespace'
-            l = luigi.ListParameter(default=[1, 2, 3])
-            expected = luigi.ListParameter()
-
-            def complete(self):
-                if self.l != self.expected:
-                    raise ValueError
-                return True
-
-        self.assertTrue(self.run_locally_split('mynamespace.A --expected [1,2,3]'))
-        self.assertTrue(self.run_locally_split('mynamespace.A --mynamespace.A-l [1,2,3] --expected [1,2,3]'))
-
-    def testTupleWithNamespaceCli(self):
-        class A(luigi.Task):
-            task_namespace = 'mynamespace'
-            t = luigi.TupleParameter(default=((1, 2), (3, 4)))
-            expected = luigi.TupleParameter()
-
-            def complete(self):
-                if self.t != self.expected:
-                    raise ValueError
-                return True
-
-        self.assertTrue(self.run_locally_split('mynamespace.A --expected ((1,2),(3,4))'))
-        self.assertTrue(self.run_locally_split('mynamespace.A --mynamespace.A-t ((1,2),(3,4)) --expected ((1,2),(3,4))'))
-
-    @with_config({"foo": {"bar": "[1,2,3]"}})
-    def testListConfig(self):
-        self.assertTrue(_value(luigi.ListParameter(config_path=dict(section="foo", name="bar"))))
-
-    @with_config({"foo": {"bar": "((1,2),(3,4))"}})
-    def testTupleConfig(self):
-        self.assertTrue(_value(luigi.TupleParameter(config_path=dict(section="foo", name="bar"))))
-
-    @with_config({"foo": {"bar": "-3"}})
-    def testNumericalParameter(self):
-        p = luigi.NumericalParameter(min_value=-3, max_value=7, var_type=int, config_path=dict(section="foo", name="bar"))
-        self.assertEqual(-3, _value(p))
-
-    @with_config({"foo": {"bar": "3"}})
-    def testChoiceParameter(self):
-        p = luigi.ChoiceParameter(var_type=int, choices=[1, 2, 3], config_path=dict(section="foo", name="bar"))
-        self.assertEqual(3, _value(p))
-
 
 class OverrideEnvStuff(LuigiTestCase):
 
     @with_config({"core": {"default-scheduler-port": '6543'}})
     def testOverrideSchedulerPort(self):
-        if six.PY3:
-            with self.assertWarnsRegex(DeprecationWarning, r'default-scheduler-port is deprecated'):
-                env_params = luigi.interface.core()
-        else:
-            env_params = luigi.interface.core()
+        env_params = luigi.interface.core()
         self.assertEqual(env_params.scheduler_port, 6543)
 
     @with_config({"core": {"scheduler-port": '6544'}})
     def testOverrideSchedulerPort2(self):
-        if six.PY3:
-            with self.assertWarnsRegex(DeprecationWarning, r'scheduler_port \(with dashes\) should be avoided'):
-                env_params = luigi.interface.core()
-        else:
-            env_params = luigi.interface.core()
+        env_params = luigi.interface.core()
         self.assertEqual(env_params.scheduler_port, 6544)
 
     @with_config({"core": {"scheduler_port": '6545'}})
@@ -920,15 +706,6 @@ class TestSerializeDateParameters(LuigiTestCase):
         self.assertEqual(luigi.MonthParameter().serialize(date), '2013-02')
         dt = datetime.datetime(2013, 2, 3, 4, 5)
         self.assertEqual(luigi.DateHourParameter().serialize(dt), '2013-02-03T04')
-
-
-class TestSerializeTimeDeltaParameters(LuigiTestCase):
-
-    def testSerialize(self):
-        tdelta = timedelta(weeks=5, days=4, hours=3, minutes=2, seconds=1)
-        self.assertEqual(luigi.TimeDeltaParameter().serialize(tdelta), '5 w 4 d 3 h 2 m 1 s')
-        tdelta = timedelta(seconds=0)
-        self.assertEqual(luigi.TimeDeltaParameter().serialize(tdelta), '0 w 0 d 0 h 0 m 0 s')
 
 
 class TestTaskParameter(LuigiTestCase):

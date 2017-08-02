@@ -84,6 +84,5 @@ class WordCount(luigi.contrib.hadoop.JobTask):
     def reducer(self, key, values):
         yield key, sum(values)
 
-
 if __name__ == '__main__':
     luigi.run()

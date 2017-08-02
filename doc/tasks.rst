@@ -156,7 +156,7 @@ Sometimes you might not know exactly what other tasks to depend on until runtime
 In that case, Luigi provides a mechanism to specify dynamic dependencies.
 If you yield another :class:`~luigi.task.Task` in the Task.run_ method,
 the current task will be suspended and the other task will be run.
-You can also yield a list of tasks.
+You can also return a list of tasks.
 
 .. code:: python
 
@@ -177,29 +177,6 @@ In other words, you should make sure your Task.run_ method is idempotent.
 
 For an example of a workflow using dynamic dependencies, see
 `examples/dynamic_requirements.py <https://github.com/spotify/luigi/blob/master/examples/dynamic_requirements.py>`_.
-
-
-Task status tracking
-~~~~~~~~~~~~~~~~~~~~
-
-For long-running or remote tasks it is convenient to see extended status information not only on
-the command line or in your logs but also in the GUI of the central scheduler. Luigi implements
-dynamic status messages and tracking urls which may point to an external monitoring system. You
-can set this information using callbacks within Task.run_:
-
-.. code:: python
-
-    class MyTask(luigi.Task):
-        def run(self):
-            # set a tracking url
-            self.set_tracking_url("http://...")
-
-            # set status messages during the workload
-            for i in range(100):
-                # do some hard work here
-                if i % 10 == 0:
-                    self.set_status_message("Progress: %d / 100" % i)
-
 
 .. _Events:
 
@@ -298,35 +275,6 @@ if there is a task A with priority 1000 but still with unmet dependencies and
 a task B with priority 1 without any pending dependencies,
 task B will be picked first.
 
-.. _Task.namespaces_famlies_and_ids:
-
-Namespaces, families and ids
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-In order to avoid name clashes and to be able to have an identifier for tasks,
-Luigi introduces the concepts *task_namespace*, *task_family* and
-*task_id*. The namespace and family operate on class level meanwhile the task
-id only exists on instance level. The concepts are best illustrated using code.
-
-.. code:: python
-
-    import luigi
-    class MyTask(luigi.Task):
-        my_param = luigi.Parameter()
-        task_namespace = 'my_namespace'
-
-    my_task = MyTask(my_param='hello')
-    print(my_task)                      # --> my_namespace.MyTask(my_param=hello)
-
-    print(my_task.get_task_namespace()) # --> my_namespace
-    print(my_task.get_task_family())    # --> my_namespace.MyTask
-    print(my_task.task_id)              # --> my_namespace.MyTask_hello_890907e7ce
-
-    print(MyTask.get_task_namespace())  # --> my_namespace
-    print(MyTask.get_task_family())     # --> my_namespace.MyTask
-    print(MyTask.task_id)               # --> Error!
-
-The full documentation for this machinery exists in the :py:mod:`~luigi.task` module.
 
 Instance caching
 ~~~~~~~~~~~~~~~~

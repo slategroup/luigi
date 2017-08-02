@@ -17,25 +17,67 @@
 
 import logging
 import os
+import signal
+import subprocess
 import sys
 import tempfile
 import shutil
 import importlib
 import tarfile
-import inspect
 try:
     import cPickle as pickle
 except ImportError:
     import pickle
 
 from luigi import six
-from luigi.contrib.external_program import ExternalProgramTask
+import luigi
+import luigi.format
+import luigi.contrib.hdfs
 from luigi import configuration
 
 logger = logging.getLogger('luigi-interface')
 
 
-class SparkSubmitTask(ExternalProgramTask):
+class SparkRunContext(object):
+
+    def __init__(self, proc):
+        self.proc = proc
+
+    def __enter__(self):
+        self.__old_signal = signal.getsignal(signal.SIGTERM)
+        signal.signal(signal.SIGTERM, self.kill_job)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is KeyboardInterrupt:
+            self.kill_job()
+        signal.signal(signal.SIGTERM, self.__old_signal)
+
+    def kill_job(self, captured_signal=None, stack_frame=None):
+        self.proc.kill()
+        if captured_signal is not None:
+            # adding 128 gives the exit code corresponding to a signal
+            sys.exit(128 + captured_signal)
+
+
+class SparkJobError(RuntimeError):
+
+    def __init__(self, message, out=None, err=None):
+        super(SparkJobError, self).__init__(message, out, err)
+        self.message = message
+        self.out = out
+        self.err = err
+
+    def __str__(self):
+        info = self.message
+        if self.out:
+            info += "\nSTDOUT: " + str(self.out)
+        if self.err:
+            info += "\nSTDERR: " + str(self.err)
+        return info
+
+
+class SparkSubmitTask(luigi.Task):
     """
     Template task for running a Spark job
 
@@ -50,9 +92,6 @@ class SparkSubmitTask(ExternalProgramTask):
     name = None
     entry_class = None
     app = None
-
-    # Only log stderr if spark fails (since stderr is normally quite verbose)
-    always_log_stderr = False
 
     def app_options(self):
         """
@@ -156,12 +195,6 @@ class SparkSubmitTask(ExternalProgramTask):
             env['HADOOP_CONF_DIR'] = hadoop_conf_dir
         return env
 
-    def program_environment(self):
-        return self.get_environment()
-
-    def program_args(self):
-        return self.spark_command() + self.app_command()
-
     def spark_command(self):
         command = [self.spark_submit]
         command += self._text_arg('--master', self.master)
@@ -193,13 +226,34 @@ class SparkSubmitTask(ExternalProgramTask):
             raise NotImplementedError("subclass should define an app (.jar or .py file)")
         return [self.app] + self.app_options()
 
+    def run(self):
+        args = list(map(str, self.spark_command() + self.app_command()))
+        logger.info('Running: {}'.format(subprocess.list2cmdline(args)))
+        tmp_stdout, tmp_stderr = tempfile.TemporaryFile(), tempfile.TemporaryFile()
+        proc = subprocess.Popen(args, stdout=tmp_stdout, stderr=tmp_stderr,
+                                env=self.get_environment(), close_fds=True,
+                                universal_newlines=True)
+        try:
+            with SparkRunContext(proc):
+                proc.wait()
+            tmp_stdout.seek(0)
+            stdout = "".join(map(lambda s: s.decode('utf-8'), tmp_stdout.readlines()))
+            logger.info("Spark job stdout:\n{0}".format(stdout))
+            if proc.returncode != 0:
+                tmp_stderr.seek(0)
+                stderr = "".join(map(lambda s: s.decode('utf-8'), tmp_stderr.readlines()))
+                raise SparkJobError('Spark job failed {0}'.format(repr(args)), out=stdout, err=stderr)
+        finally:
+            tmp_stderr.close()
+            tmp_stdout.close()
+
     def _list_config(self, config):
         if config and isinstance(config, six.string_types):
             return list(map(lambda x: x.strip(), config.split(',')))
 
     def _dict_config(self, config):
         if config and isinstance(config, six.string_types):
-            return dict(map(lambda i: i.split('=', 1), config.split('|')))
+            return dict(map(lambda i: i.split('='), config.split('|')))
 
     def _text_arg(self, name, value):
         if value:
@@ -269,9 +323,6 @@ class PySparkTask(SparkSubmitTask):
         """
         raise NotImplementedError("subclass should define a main method")
 
-    def program_args(self):
-        return self.spark_command() + self.app_command()
-
     def app_command(self):
         return [self.app, self.run_pickle] + self.app_options()
 
@@ -279,9 +330,6 @@ class PySparkTask(SparkSubmitTask):
         self.run_path = tempfile.mkdtemp(prefix=self.name)
         self.run_pickle = os.path.join(self.run_path, '.'.join([self.name.replace(' ', '_'), 'pickle']))
         with open(self.run_pickle, 'wb') as fd:
-            # Copy module file to run path.
-            module_path = os.path.abspath(inspect.getfile(self.__class__))
-            shutil.copy(module_path, os.path.join(self.run_path, '.'))
             self._dump(fd)
         try:
             super(PySparkTask, self).run()
@@ -289,14 +337,13 @@ class PySparkTask(SparkSubmitTask):
             shutil.rmtree(self.run_path)
 
     def _dump(self, fd):
-        with self.no_unpicklable_properties():
-            if self.__module__ == '__main__':
-                d = pickle.dumps(self)
-                module_name = os.path.basename(sys.argv[0]).rsplit('.', 1)[0]
-                d = d.replace(b'c__main__', b'c' + module_name.encode('ascii'))
-                fd.write(d)
-            else:
-                pickle.dump(self, fd)
+        if self.__module__ == '__main__':
+            d = pickle.dumps(self)
+            module_name = os.path.basename(sys.argv[0]).rsplit('.', 1)[0]
+            d = d.replace(b'(c__main__', "(c" + module_name)
+            fd.write(d)
+        else:
+            pickle.dump(self, fd)
 
     def _setup_packages(self, sc):
         """

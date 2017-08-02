@@ -17,6 +17,7 @@
 
 import os
 import tempfile
+import unittest
 
 import luigi.server
 import server_test
@@ -25,7 +26,7 @@ tempdir = tempfile.mkdtemp()
 
 
 class DummyTask(luigi.Task):
-    id = luigi.IntParameter()
+    id = luigi.Parameter()
 
     def run(self):
         f = self.output().open('w')
@@ -50,3 +51,7 @@ class RemoteSchedulerTest(server_test.ServerTestBase):
 
     def test_multiple_workers(self):
         self._test_run(workers=10)
+
+
+if __name__ == '__main__':
+    unittest.main()

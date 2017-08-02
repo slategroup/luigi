@@ -106,3 +106,7 @@ class MultiprocessWorkerTest(unittest.TestCase):
                                                     self.gw_res(0, None)])
 
         self.assertFalse(self.worker.run())
+
+
+if __name__ == '__main__':
+    unittest.main()

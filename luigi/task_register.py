@@ -19,6 +19,7 @@ Define the centralized register of all :class:`~luigi.task.Task` classes.
 """
 
 import abc
+from collections import OrderedDict
 
 from luigi import six
 import logging
@@ -48,7 +49,7 @@ class Register(abc.ABCMeta):
     2. Keep track of all subclasses of :py:class:`Task` and expose them.
     """
     __instance_cache = {}
-    _default_namespace_dict = {}
+    _default_namespace = None
     _reg = []
     AMBIGUOUS_CLASS = object()  # Placeholder denoting an error
     """If this value is returned by :py:meth:`_get_reg` then there is an
@@ -61,12 +62,14 @@ class Register(abc.ABCMeta):
 
         Also register all subclasses.
 
-        When the set or inherited namespace evaluates to ``None``, set the task namespace to
-        whatever the currently declared namespace is.
+        Set the task namespace to whatever the currently declared namespace is.
         """
+        if "task_namespace" not in classdict:
+            classdict["task_namespace"] = metacls._default_namespace
+
         cls = super(Register, metacls).__new__(metacls, classname, bases, classdict)
-        cls._namespace_at_class_time = metacls._get_namespace(cls.__module__)
         metacls._reg.append(cls)
+
         return cls
 
     def __call__(cls, *args, **kwargs):
@@ -117,35 +120,37 @@ class Register(abc.ABCMeta):
     @property
     def task_family(cls):
         """
-        Internal note: This function will be deleted soon.
+        The task family for the given class.
+
+        If ``cls.task_namespace is None`` then it's the name of the class.
+        Otherwise, ``<task_namespace>.`` is prefixed to the class name.
         """
-        if not cls.get_task_namespace():
+        if cls.task_namespace is None:
             return cls.__name__
         else:
-            return "{}.{}".format(cls.get_task_namespace(), cls.__name__)
+            return "%s.%s" % (cls.task_namespace, cls.__name__)
 
     @classmethod
     def _get_reg(cls):
         """Return all of the registered classes.
 
-        :return:  an ``dict`` of task_family -> class
+        :return:  an ``collections.OrderedDict`` of task_family -> class
         """
         # We have to do this on-demand in case task names have changed later
-        reg = dict()
-        for task_cls in cls._reg:
-            if not task_cls._visible_in_registry:
-                continue
+        # We return this in a topologically sorted list of inheritance: this is useful in some cases (#822)
+        reg = OrderedDict()
+        for cls in cls._reg:
+            name = cls.task_family
 
-            name = task_cls.get_task_family()
-            if name in reg and \
-                    (reg[name] == Register.AMBIGUOUS_CLASS or  # Check so issubclass doesn't crash
-                     not issubclass(task_cls, reg[name])):
+            if name in reg and reg[name] != cls and \
+                    reg[name] != cls.AMBIGUOUS_CLASS and \
+                    not issubclass(cls, reg[name]):
                 # Registering two different classes - this means we can't instantiate them by name
                 # The only exception is if one class is a subclass of the other. In that case, we
                 # instantiate the most-derived class (this fixes some issues with decorator wrappers).
-                reg[name] = Register.AMBIGUOUS_CLASS
+                reg[name] = cls.AMBIGUOUS_CLASS
             else:
-                reg[name] = task_cls
+                reg[name] = cls
 
         return reg
 
@@ -221,26 +226,6 @@ class Register(abc.ABCMeta):
             return "No task %s. Did you mean:\n%s" % (task_name, '\n'.join(candidates))
         else:
             return "No task %s. Candidates are: %s" % (task_name, cls.tasks_str())
-
-    @classmethod
-    def _get_namespace(mcs, module_name):
-        for parent in mcs._module_parents(module_name):
-            entry = mcs._default_namespace_dict.get(parent)
-            if entry:
-                return entry
-        return ''  # Default if nothing specifies
-
-    @staticmethod
-    def _module_parents(module_name):
-        '''
-        >>> list(Register._module_parents('a.b'))
-        ['a.b', 'a', '']
-        '''
-        spl = module_name.split('.')
-        for i in range(len(spl), 0, -1):
-            yield '.'.join(spl[0:i])
-        if module_name:
-            yield ''
 
 
 def load_task(module, task_name, params_str):

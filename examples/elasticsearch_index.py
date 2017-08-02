@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
+
 import datetime
 import json
 
@@ -110,6 +111,5 @@ class IndexDocuments(CopyToIndex):
         """
         return FakeDocuments()
 
-
 if __name__ == "__main__":
-    luigi.run(['IndexDocuments', '--local-scheduler'])
+    luigi.run(['--task', 'IndexDocuments'])

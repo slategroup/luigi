@@ -79,6 +79,5 @@ def main():
             for job in jobs:
                 print("    {job}".format(job=job))
 
-
 if __name__ == '__main__':
     main()

@@ -101,8 +101,5 @@ class RunAnywayTarget(luigi.Target):
         logger.info('Marking %s as done', self)
 
         fn = self.get_path()
-        try:
-            os.makedirs(os.path.dirname(fn))
-        except OSError:
-            pass
+        os.makedirs(os.path.dirname(fn), exist_ok=True)
         open(fn, 'w').close()

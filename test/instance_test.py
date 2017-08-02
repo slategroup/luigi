@@ -90,3 +90,6 @@ class InstanceTest(unittest.TestCase):
             x = luigi.Parameter()
 
         dummy = DummyTask(x={})  # NOQA
+
+if __name__ == '__main__':
+    unittest.main()

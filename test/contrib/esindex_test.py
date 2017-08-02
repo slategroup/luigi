@@ -56,7 +56,6 @@ def _create_test_index():
     if not es.indices.exists(INDEX):
         es.indices.create(INDEX)
 
-
 try:
     _create_test_index()
 except Exception:

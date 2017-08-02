@@ -242,6 +242,14 @@ class Y2(luigi.Task):
     pass
 
 
+@inherits(X)
+class Z(luigi.Task):
+    n = None
+
+    def requires(self):
+        return self.clone_parent()
+
+
 @requires(X)
 class Y3(luigi.Task):
     n = luigi.IntParameter(default=43)
@@ -254,6 +262,9 @@ class CloneParentTest(unittest.TestCase):
         x = X()
         self.assertEqual(y.requires(), x)
         self.assertEqual(y.n, 42)
+
+        z = Z()
+        self.assertEqual(z.requires(), x)
 
     def test_requires(self):
         y2 = Y2()
@@ -354,3 +365,7 @@ class SubtaskTest(unittest.TestCase):
         # the same name
         from luigi.task import Register
         self.assertEqual(Register.get_task_cls('SubtaskDelegator'), SubtaskDelegator)
+
+
+if __name__ == '__main__':
+    unittest.main()
