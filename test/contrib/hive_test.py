@@ -252,6 +252,10 @@ class HiveCommandClientTest(unittest.TestCase):
         client = luigi.contrib.hive.get_default_client()
         self.assertEqual(luigi.contrib.hive.ApacheHiveCommandClient, type(client))
 
+        hive_syntax.get_config.return_value.get.return_value = "metastore"
+        client = luigi.contrib.hive.get_default_client()
+        self.assertEqual(luigi.contrib.hive.MetastoreClient, type(client))
+
     @mock.patch('subprocess.Popen')
     def test_run_hive_command(self, popen):
         # I'm testing this again to check the return codes
@@ -273,13 +277,6 @@ class HiveCommandClientTest(unittest.TestCase):
         comm.return_value = "", "some stderr stuff"
         returned = luigi.contrib.hive.run_hive(["blah", "blah"], False)
         self.assertEqual("", returned)
-
-
-class TestHiveMisc(unittest.TestCase):
-
-    def test_import_old(self):
-        import luigi.hive
-        self.assertEqual(luigi.hive.HiveQueryTask, luigi.contrib.hive.HiveQueryTask)
 
 
 class MyHiveTask(luigi.contrib.hive.HiveQueryTask):
@@ -311,7 +308,3 @@ class TestHiveTarget(unittest.TestCase):
         target = luigi.contrib.hive.HivePartitionTarget(database='db', table='foo', partition='bar', client=client)
         target.exists()
         client.table_exists.assert_called_with('foo', 'db', 'bar')
-
-
-if __name__ == '__main__':
-    unittest.main()

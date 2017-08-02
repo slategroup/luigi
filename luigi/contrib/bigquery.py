@@ -19,18 +19,16 @@ import collections
 import logging
 import luigi.target
 import time
+from luigi.contrib import gcp
 
 logger = logging.getLogger('luigi-interface')
 
 try:
-    import httplib2
-    import oauth2client
-
     from googleapiclient import discovery
     from googleapiclient import http
 except ImportError:
-    logger.warning('Bigquery module imported, but google-api-python-client is '
-                   'not installed. Any bigquery task will fail')
+    logger.warning('BigQuery module imported, but google-api-python-client is '
+                   'not installed. Any BigQuery task will fail')
 
 
 class CreateDisposition(object):
@@ -50,18 +48,47 @@ class QueryMode(object):
 
 
 class SourceFormat(object):
+    AVRO = 'AVRO'
     CSV = 'CSV'
     DATASTORE_BACKUP = 'DATASTORE_BACKUP'
     NEWLINE_DELIMITED_JSON = 'NEWLINE_DELIMITED_JSON'
 
 
-BQDataset = collections.namedtuple('BQDataset', 'project_id dataset_id')
+class FieldDelimiter(object):
+    """
+    The separator for fields in a CSV file. The separator can be any ISO-8859-1 single-byte character.
+    To use a character in the range 128-255, you must encode the character as UTF8.
+    BigQuery converts the string to ISO-8859-1 encoding, and then uses the
+    first byte of the encoded string to split the data in its raw, binary state.
+    BigQuery also supports the escape sequence "\t" to specify a tab separator.
+    The default value is a comma (',').
+
+    https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.load
+    """
+
+    COMMA = ','  # Default
+    TAB = "\t"
+    PIPE = "|"
 
 
-class BQTable(collections.namedtuple('BQTable', 'project_id dataset_id table_id')):
+class Encoding(object):
+    """
+    [Optional] The character encoding of the data. The supported values are UTF-8 or ISO-8859-1. The default value is UTF-8.
+
+    BigQuery decodes the data after the raw, binary data has been split using the values of the quote and fieldDelimiter properties.
+    """
+
+    UTF_8 = 'UTF-8'
+    ISO_8859_1 = 'ISO-8859-1'
+
+
+BQDataset = collections.namedtuple('BQDataset', 'project_id dataset_id location')
+
+
+class BQTable(collections.namedtuple('BQTable', 'project_id dataset_id table_id location')):
     @property
     def dataset(self):
-        return BQDataset(project_id=self.project_id, dataset_id=self.dataset_id)
+        return BQDataset(project_id=self.project_id, dataset_id=self.dataset_id, location=self.location)
 
     @property
     def uri(self):
@@ -69,7 +96,7 @@ class BQTable(collections.namedtuple('BQTable', 'project_id dataset_id table_id'
                self.dataset.dataset_id + "/" + self.table_id
 
 
-class BigqueryClient(object):
+class BigQueryClient(object):
     """A client for Google BigQuery.
 
     For details of how authentication and the descriptor work, see the
@@ -78,26 +105,32 @@ class BigqueryClient(object):
     """
 
     def __init__(self, oauth_credentials=None, descriptor='', http_=None):
-        http_ = http_ or httplib2.Http()
-
-        if not oauth_credentials:
-            oauth_credentials = oauth2client.client.GoogleCredentials.get_application_default()
+        authenticate_kwargs = gcp.get_authenticate_kwargs(oauth_credentials, http_)
 
         if descriptor:
-            self.client = discovery.build_from_document(descriptor, credentials=oauth_credentials, http=http_)
+            self.client = discovery.build_from_document(descriptor, **authenticate_kwargs)
         else:
-            self.client = discovery.build('bigquery', 'v2', credentials=oauth_credentials, http=http_)
+            self.client = discovery.build('bigquery', 'v2', **authenticate_kwargs)
 
     def dataset_exists(self, dataset):
         """Returns whether the given dataset exists.
+        If regional location is specified for the dataset, that is also checked
+        to be compatible with the remote dataset, otherwise an exception is thrown.
 
            :param dataset:
            :type dataset: BQDataset
         """
 
         try:
-            self.client.datasets().get(projectId=dataset.project_id,
-                                       datasetId=dataset.dataset_id).execute()
+            response = self.client.datasets().get(projectId=dataset.project_id,
+                                                  datasetId=dataset.dataset_id).execute()
+            if dataset.location is not None:
+                fetched_location = response.get('location')
+                if dataset.location != fetched_location:
+                    raise Exception('''Dataset already exists with regional location {}. Can't use {}.'''.format(
+                        fetched_location if fetched_location is not None else 'unspecified',
+                        dataset.location))
+
         except http.HttpError as ex:
             if ex.resp.status == 404:
                 return False
@@ -135,8 +168,10 @@ class BigqueryClient(object):
         """
 
         try:
-            self.client.datasets().insert(projectId=dataset.project_id, body=dict(
-                {'id': '{}:{}'.format(dataset.project_id, dataset.dataset_id)}, **body)).execute()
+            body['id'] = '{}:{}'.format(dataset.project_id, dataset.dataset_id)
+            if dataset.location is not None:
+                body['location'] = dataset.location
+            self.client.datasets().insert(projectId=dataset.project_id, body=body).execute()
         except http.HttpError as ex:
             if ex.resp.status == 409:
                 if raise_if_exists:
@@ -270,7 +305,7 @@ class BigqueryClient(object):
                                         body=body).execute()
 
     def run_job(self, project_id, body, dataset=None):
-        """Runs a bigquery "job". See the documentation for the format of body.
+        """Runs a BigQuery "job". See the documentation for the format of body.
 
            .. note::
                You probably don't need to use this directly. Use the tasks defined below.
@@ -286,14 +321,14 @@ class BigqueryClient(object):
         job_id = new_job['jobReference']['jobId']
         logger.info('Started import job %s:%s', project_id, job_id)
         while True:
-            status = self.client.jobs().get(projectId=project_id, jobId=job_id).execute()
+            status = self.client.jobs().get(projectId=project_id, jobId=job_id).execute(num_retries=10)
             if status['status']['state'] == 'DONE':
-                if status['status'].get('errors'):
-                    raise Exception('Bigquery job failed: {}'.format(status['status']['errors']))
+                if status['status'].get('errorResult'):
+                    raise Exception('BigQuery job failed: {}'.format(status['status']['errorResult']))
                 return
 
             logger.info('Waiting for job %s:%s to complete...', project_id, job_id)
-            time.sleep(5.0)
+            time.sleep(5)
 
     def copy(self,
              source_table,
@@ -313,7 +348,6 @@ class BigqueryClient(object):
         """
 
         job = {
-            "projectId": dest_table.project_id,
             "configuration": {
                 "copy": {
                     "sourceTable": {
@@ -335,10 +369,10 @@ class BigqueryClient(object):
         self.run_job(dest_table.project_id, job, dataset=dest_table.dataset)
 
 
-class BigqueryTarget(luigi.target.Target):
-    def __init__(self, project_id, dataset_id, table_id, client=None):
-        self.table = BQTable(project_id=project_id, dataset_id=dataset_id, table_id=table_id)
-        self.client = client or BigqueryClient()
+class BigQueryTarget(luigi.target.Target):
+    def __init__(self, project_id, dataset_id, table_id, client=None, location=None):
+        self.table = BQTable(project_id=project_id, dataset_id=dataset_id, table_id=table_id, location=location)
+        self.client = client or BigQueryClient()
 
     @classmethod
     def from_bqtable(cls, table, client=None):
@@ -356,12 +390,12 @@ class BigqueryTarget(luigi.target.Target):
         return str(self.table)
 
 
-class MixinBigqueryBulkComplete(object):
+class MixinBigQueryBulkComplete(object):
     """
-    Allows to efficiently check if a range of BigqueryTargets are complete.
+    Allows to efficiently check if a range of BigQueryTargets are complete.
     This enables scheduling tasks with luigi range tools.
 
-    If you implement a custom Luigi task with a BigqueryTarget output, make sure to also inherit
+    If you implement a custom Luigi task with a BigQueryTarget output, make sure to also inherit
     from this mixin to enable range support.
     """
 
@@ -389,13 +423,18 @@ class MixinBigqueryBulkComplete(object):
                 yield p
 
 
-class BigqueryLoadTask(MixinBigqueryBulkComplete, luigi.Task):
-    """Load data into bigquery from GCS."""
+class BigQueryLoadTask(MixinBigQueryBulkComplete, luigi.Task):
+    """Load data into BigQuery from GCS."""
 
     @property
     def source_format(self):
         """The source format to use (see :py:class:`SourceFormat`)."""
         return SourceFormat.NEWLINE_DELIMITED_JSON
+
+    @property
+    def encoding(self):
+        """The encoding of the data that is going to be loaded (see :py:class:`Encoding`)."""
+        return Encoding.UTF_8
 
     @property
     def write_disposition(self):
@@ -408,21 +447,64 @@ class BigqueryLoadTask(MixinBigqueryBulkComplete, luigi.Task):
     def schema(self):
         """Schema in the format defined at https://cloud.google.com/bigquery/docs/reference/v2/jobs#configuration.load.schema.
 
-        If the value is falsy, it is omitted and inferred by bigquery, which only works for CSV inputs."""
+        If the value is falsy, it is omitted and inferred by BigQuery, which only works for AVRO and CSV inputs."""
         return []
 
     @property
     def max_bad_records(self):
+        """ The maximum number of bad records that BigQuery can ignore when reading data.
+
+        If the number of bad records exceeds this value, an invalid error is returned in the job result."""
         return 0
 
     @property
+    def field_delimiter(self):
+        """The separator for fields in a CSV file. The separator can be any ISO-8859-1 single-byte character."""
+        return FieldDelimiter.COMMA
+
     def source_uris(self):
-        """Source data which should be in GCS."""
+        """The fully-qualified URIs that point to your data in Google Cloud Storage.
+
+        Each URI can contain one '*' wildcard character and it must come after the 'bucket' name."""
         return [x.path for x in luigi.task.flatten(self.input())]
+
+    @property
+    def skip_leading_rows(self):
+        """The number of rows at the top of a CSV file that BigQuery will skip when loading the data.
+
+        The default value is 0. This property is useful if you have header rows in the file that should be skipped."""
+        return 0
+
+    @property
+    def allow_jagged_rows(self):
+        """Accept rows that are missing trailing optional columns. The missing values are treated as nulls.
+
+        If false, records with missing trailing columns are treated as bad records, and if there are too many bad records,
+
+        an invalid error is returned in the job result. The default value is false. Only applicable to CSV, ignored for other formats."""
+        return False
+
+    @property
+    def ignore_unknown_values(self):
+        """Indicates if BigQuery should allow extra values that are not represented in the table schema.
+
+        If true, the extra values are ignored. If false, records with extra columns are treated as bad records,
+
+        and if there are too many bad records, an invalid error is returned in the job result. The default value is false.
+
+        The sourceFormat property determines what BigQuery treats as an extra value:
+
+        CSV: Trailing columns JSON: Named values that don't match any column names"""
+        return False
+
+    @property
+    def allow_quoted_new_lines(self):
+        """	Indicates if BigQuery should allow quoted data sections that contain newline characters in a CSV file. The default value is false."""
+        return False
 
     def run(self):
         output = self.output()
-        assert isinstance(output, BigqueryTarget), 'Output should be a bigquery target, not %s' % (output)
+        assert isinstance(output, BigQueryTarget), 'Output must be a BigQueryTarget, not %s' % (output)
 
         bq_client = output.client
 
@@ -430,7 +512,6 @@ class BigqueryLoadTask(MixinBigqueryBulkComplete, luigi.Task):
         assert all(x.startswith('gs://') for x in source_uris)
 
         job = {
-            'projectId': output.table.project_id,
             'configuration': {
                 'load': {
                     'destinationTable': {
@@ -438,20 +519,29 @@ class BigqueryLoadTask(MixinBigqueryBulkComplete, luigi.Task):
                         'datasetId': output.table.dataset_id,
                         'tableId': output.table.table_id,
                     },
+                    'encoding': self.encoding,
                     'sourceFormat': self.source_format,
                     'writeDisposition': self.write_disposition,
                     'sourceUris': source_uris,
                     'maxBadRecords': self.max_bad_records,
+                    'ignoreUnknownValues': self.ignore_unknown_values
                 }
             }
         }
+
+        if self.source_format == SourceFormat.CSV:
+            job['configuration']['load']['fieldDelimiter'] = self.field_delimiter
+            job['configuration']['load']['skipLeadingRows'] = self.skip_leading_rows
+            job['configuration']['load']['allowJaggedRows'] = self.allow_jagged_rows
+            job['configuration']['load']['allowQuotedNewlines'] = self.allow_quoted_new_lines
+
         if self.schema:
             job['configuration']['load']['schema'] = {'fields': self.schema}
 
         bq_client.run_job(output.table.project_id, job, dataset=output.table.dataset)
 
 
-class BigqueryRunQueryTask(MixinBigqueryBulkComplete, luigi.Task):
+class BigQueryRunQueryTask(MixinBigQueryBulkComplete, luigi.Task):
 
     @property
     def write_disposition(self):
@@ -481,9 +571,21 @@ class BigqueryRunQueryTask(MixinBigqueryBulkComplete, luigi.Task):
         """The query mode. See :py:class:`QueryMode`."""
         return QueryMode.INTERACTIVE
 
+    @property
+    def udf_resource_uris(self):
+        """Iterator of code resource to load from a Google Cloud Storage URI (gs://bucket/path).
+        """
+        return []
+
+    @property
+    def use_legacy_sql(self):
+        """Whether to use legacy SQL
+        """
+        return True
+
     def run(self):
         output = self.output()
-        assert isinstance(output, BigqueryTarget), 'Output should be a bigquery target, not %s' % (output)
+        assert isinstance(output, BigQueryTarget), 'Output must be a BigQueryTarget, not %s' % (output)
 
         query = self.query
         assert query, 'No query was provided'
@@ -495,7 +597,6 @@ class BigqueryRunQueryTask(MixinBigqueryBulkComplete, luigi.Task):
         logger.info('Query SQL: %s', query)
 
         job = {
-            'projectId': output.table.project_id,
             'configuration': {
                 'query': {
                     'query': query,
@@ -508,7 +609,9 @@ class BigqueryRunQueryTask(MixinBigqueryBulkComplete, luigi.Task):
                     'allowLargeResults': True,
                     'createDisposition': self.create_disposition,
                     'writeDisposition': self.write_disposition,
-                    'flattenResults': self.flatten_results
+                    'flattenResults': self.flatten_results,
+                    'userDefinedFunctionResources': [{"resourceUri": v} for v in self.udf_resource_uris],
+                    'useLegacySql': self.use_legacy_sql,
                 }
             }
         }
@@ -516,7 +619,7 @@ class BigqueryRunQueryTask(MixinBigqueryBulkComplete, luigi.Task):
         bq_client.run_job(output.table.project_id, job, dataset=output.table.dataset)
 
 
-class BigqueryCreateViewTask(luigi.Task):
+class BigQueryCreateViewTask(luigi.Task):
     """
     Creates (or updates) a view in BigQuery.
 
@@ -533,7 +636,7 @@ class BigqueryCreateViewTask(luigi.Task):
 
     def complete(self):
         output = self.output()
-        assert isinstance(output, BigqueryTarget), 'Output must be a bigquery target, not %s' % (output)
+        assert isinstance(output, BigQueryTarget), 'Output must be a BigQueryTarget, not %s' % (output)
 
         if not output.exists():
             return False
@@ -543,7 +646,7 @@ class BigqueryCreateViewTask(luigi.Task):
 
     def run(self):
         output = self.output()
-        assert isinstance(output, BigqueryTarget), 'Output must be a bigquery target, not %s' % (output)
+        assert isinstance(output, BigQueryTarget), 'Output must be a BigQueryTarget, not %s' % (output)
 
         view = self.view
         assert view, 'No view was provided'
@@ -555,8 +658,18 @@ class BigqueryCreateViewTask(luigi.Task):
         output.client.update_view(output.table, view)
 
 
-class ExternalBigqueryTask(MixinBigqueryBulkComplete, luigi.ExternalTask):
+class ExternalBigQueryTask(MixinBigQueryBulkComplete, luigi.ExternalTask):
     """
     An external task for a BigQuery target.
     """
     pass
+
+
+# the original inconsistently capitalized aliases, for backwards compatibility
+BigqueryClient = BigQueryClient
+BigqueryTarget = BigQueryTarget
+MixinBigqueryBulkComplete = MixinBigQueryBulkComplete
+BigqueryLoadTask = BigQueryLoadTask
+BigqueryRunQueryTask = BigQueryRunQueryTask
+BigqueryCreateViewTask = BigQueryCreateViewTask
+ExternalBigqueryTask = ExternalBigQueryTask

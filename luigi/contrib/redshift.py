@@ -19,6 +19,7 @@ import abc
 import json
 import logging
 import time
+import os
 
 import luigi
 from luigi import postgres
@@ -58,6 +59,7 @@ class S3CopyToTable(rdbms.CopyToTable):
     Usage:
 
     * Subclass and override the required attributes:
+
       * `host`,
       * `database`,
       * `user`,
@@ -76,17 +78,38 @@ class S3CopyToTable(rdbms.CopyToTable):
         """
         return None
 
-    @abc.abstractproperty
+    @property
     def aws_access_key_id(self):
         """
         Override to return the key id.
         """
         return None
 
-    @abc.abstractproperty
+    @property
     def aws_secret_access_key(self):
         """
         Override to return the secret access key.
+        """
+        return None
+
+    @property
+    def aws_account_id(self):
+        """
+        Override to return the account id.
+        """
+        return None
+
+    @property
+    def aws_arn_role_name(self):
+        """
+        Override to return the arn role name.
+        """
+        return None
+
+    @property
+    def aws_session_token(self):
+        """
+        Override to return the session token.
         """
         return None
 
@@ -214,7 +237,6 @@ class S3CopyToTable(rdbms.CopyToTable):
                     name=name,
                     type=type) for name, type in self.columns
             )
-
             query = ("CREATE {type} TABLE "
                      "{table} ({coldefs}) "
                      "{table_attributes}").format(
@@ -224,6 +246,9 @@ class S3CopyToTable(rdbms.CopyToTable):
                 table_attributes=self.table_attributes)
 
             connection.cursor().execute(query)
+        else:
+            raise ValueError("create_table() found no columns for %r"
+                             % self.table)
 
     def run(self):
         """
@@ -252,14 +277,38 @@ class S3CopyToTable(rdbms.CopyToTable):
     def copy(self, cursor, f):
         """
         Defines copying from s3 into redshift.
+
+        If both key-based and role-based credentials are provided, role-based will be used.
         """
+        # format the credentials string dependent upon which type of credentials were provided
+        if self.aws_account_id and self.aws_arn_role_name:
+            cred_str = 'aws_iam_role=arn:aws:iam::{id}:role/{role}'.format(
+                id=self.aws_account_id,
+                role=self.aws_arn_role_name
+            )
+        elif self.aws_access_key_id and self.aws_secret_access_key:
+            cred_str = 'aws_access_key_id={key};aws_secret_access_key={secret}{opt}'.format(
+                key=self.aws_access_key_id,
+                secret=self.aws_secret_access_key,
+                opt=';token={}'.format(self.aws_session_token) if self.aws_session_token else ''
+            )
+        else:
+            raise NotImplementedError("Missing Credentials. "
+                                      "Override one of the following pairs of auth-args: "
+                                      "'aws_access_key_id' AND 'aws_secret_access_key' OR "
+                                      "'aws_account_id' AND 'aws_arn_role_name'")
+
         logger.info("Inserting file: %s", f)
         cursor.execute("""
-         COPY %s from '%s'
-         CREDENTIALS 'aws_access_key_id=%s;aws_secret_access_key=%s'
-         %s
-         ;""" % (self.table, f, self.aws_access_key_id,
-                 self.aws_secret_access_key, self.copy_options))
+         COPY {table} from '{source}'
+         CREDENTIALS '{creds}'
+         {options}
+         ;""".format(
+            table=self.table,
+            source=f,
+            creds=cred_str,
+            options=self.copy_options)
+        )
 
     def output(self):
         """
@@ -283,11 +332,11 @@ class S3CopyToTable(rdbms.CopyToTable):
         if '.' in self.table:
             query = ("select 1 as table_exists "
                      "from information_schema.tables "
-                     "where table_schema = %s and table_name = %s limit 1")
+                     "where table_schema = lower(%s) and table_name = lower(%s) limit 1")
         else:
             query = ("select 1 as table_exists "
                      "from pg_table_def "
-                     "where tablename = %s limit 1")
+                     "where tablename = lower(%s) limit 1")
         cursor = connection.cursor()
         try:
             cursor.execute(query, tuple(self.table.split('.')))
@@ -304,10 +353,12 @@ class S3CopyToTable(rdbms.CopyToTable):
             logger.info("Creating table %s", self.table)
             connection.reset()
             self.create_table(connection)
-        elif self.do_truncate_table:
+
+        if self.do_truncate_table:
             logger.info("Truncating table %s", self.table)
             self.truncate_table(connection)
-        elif self.do_prune():
+
+        if self.do_prune():
             logger.info("Removing %s older than %s from %s", self.prune_column, self.prune_date, self.prune_table)
             self.prune(connection)
 
@@ -362,15 +413,22 @@ class S3CopyJSONToTable(S3CopyToTable):
         """
         Defines copying JSON from s3 into redshift.
         """
+        # if session token is set, create token string
+        if self.aws_session_token:
+            token = ';token=%s' % self.aws_session_token
+        # otherwise, leave token string empty
+        else:
+            token = ''
 
+        logger.info("Inserting file: %s", f)
         cursor.execute("""
          COPY %s from '%s'
-         CREDENTIALS 'aws_access_key_id=%s;aws_secret_access_key=%s'
+         CREDENTIALS 'aws_access_key_id=%s;aws_secret_access_key=%s%s'
          JSON AS '%s' %s
          %s
          ;""" % (self.table, f, self.aws_access_key_id,
-                 self.aws_secret_access_key, self.jsonpath,
-                 self.copy_json_options, self.copy_options))
+                 self.aws_secret_access_key, token,
+                 self.jsonpath, self.copy_json_options, self.copy_options))
 
 
 class RedshiftManifestTask(S3PathTask):
@@ -529,6 +587,106 @@ class RedshiftQuery(postgres.PostgresQuery):
 
     To customize the query signature as recorded in the database marker table, override the `update_id` property.
     """
+
+    def output(self):
+        """
+        Returns a RedshiftTarget representing the executed query.
+
+        Normally you don't override this.
+        """
+        return RedshiftTarget(
+            host=self.host,
+            database=self.database,
+            user=self.user,
+            password=self.password,
+            table=self.table,
+            update_id=self.update_id
+        )
+
+
+class RedshiftUnloadTask(postgres.PostgresQuery):
+    """
+    Template task for running UNLOAD on an Amazon Redshift database
+
+    Usage:
+    Subclass and override the required `host`, `database`, `user`, `password`, `table`, and `query` attributes.
+    Override the `run` method if your use case requires some action with the query result.
+    Task instances require a dynamic `update_id`, e.g. via parameter(s), otherwise the query will only execute once
+    To customize the query signature as recorded in the database marker table, override the `update_id` property.
+    """
+
+    @abc.abstractproperty
+    def aws_access_key_id(self):
+        """
+        Override to return the key id.
+        """
+        return None
+
+    @abc.abstractproperty
+    def aws_secret_access_key(self):
+        """
+        Override to return the secret access key.
+        """
+        return None
+
+    @property
+    def s3_unload_path(self):
+        """
+        Override to return the load path.
+        """
+        return ''
+
+    @property
+    def unload_options(self):
+        """
+        Add extra or override default unload options:
+        """
+        return "DELIMITER '|' ADDQUOTES GZIP ALLOWOVERWRITE PARALLEL ON"
+
+    @property
+    def unload_query(self):
+        """
+        Default UNLOAD command
+        """
+        return ("UNLOAD ( '{query}' ) TO '{s3_unload_path}' "
+                "credentials 'aws_access_key_id={s3_access_key};aws_secret_access_key={s3_security_key}' "
+                "{unload_options};")
+
+    def run(self):
+        connection = self.output().connect()
+        cursor = connection.cursor()
+
+        # Retrieve AWS s3 credentials
+        config = luigi.configuration.get_config()
+        if self.aws_access_key_id is None or self.aws_secret_access_key is None:
+            self.aws_access_key_id = config.get('s3', 'aws_access_key_id')
+            self.aws_secret_access_key = config.get('s3', 'aws_secret_access_key')
+        # Optionally we can access env variables to get the keys
+        if self.aws_access_key_id is None or self.aws_access_key_id.strip() == '' \
+                or self.aws_secret_access_key is None or self.aws_secret_access_key.strip() == '':
+            self.aws_access_key_id = os.environ['AWS_ACCESS_KEY_ID']
+            self.aws_secret_access_key = os.environ['AWS_SECRET_ACCESS_KEY']
+
+        unload_query = self.unload_query.format(
+            query=self.query().replace("'", r"\'"),
+            s3_unload_path=self.s3_unload_path,
+            unload_options=self.unload_options,
+            s3_access_key=self.aws_access_key_id,
+            s3_security_key=self.aws_secret_access_key)
+
+        logger.info('Executing unload query from task: {name}'.format(name=self.__class__))
+        try:
+            cursor = connection.cursor()
+            cursor.execute(unload_query)
+            logger.info(cursor.statusmessage)
+        except:
+            raise
+
+        # Update marker table
+        self.output().touch(connection)
+        # commit and close connection
+        connection.commit()
+        connection.close()
 
     def output(self):
         """
